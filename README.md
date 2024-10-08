@@ -2,10 +2,17 @@
 
 This action internally uses the same Checkmarx One CLI as is used by the [Checkmarx AST GitHub Action](https://github.com/marketplace/actions/checkmarx-ast-github-action).  There are a few significant differences with this action:
 
-* The workflow supports both PR decorations with scan summaries and Sarif file uploads to for use with GitHub security.
-* Execution is performed in your build environment container created with the [Checkmarx Supply Chain Toolkit](https://github.com/checkmarx-ts/cx-supply-chain-toolkit).
-* Supply chain scanning is performed in the build environment container.
+* The workflow executes both PR decorations with scan summaries and Sarif file uploads to for use with GitHub CodeQL security.
+* Dependency resolution for supply chain scanning is performed in the code's build environment for the most accurate results.
+* The code's build environment can be located in:
+  * A GitHub-hosted runner
+  * A self-hosted runner
+  * A container
 
+While you will get supply chain scan results using the [Checkmarx AST GitHub Action](https://github.com/marketplace/actions/checkmarx-ast-github-action), the dependency
+resolution is performed in a server-side build environment.  The server-side build
+environment may not be sufficient for completely accurate supply chain
+scan results.
 
 # Quick Start
 
@@ -13,17 +20,17 @@ This action internally uses the same Checkmarx One CLI as is used by the [Checkm
 
 For the Quick Start, the following prerequisites apply:
 
-* You have created a build environment container using the [Checkmarx Supply Chain Toolkit](https://github.com/checkmarx-ts/cx-supply-chain-toolkit) and the runner can retrieve that container with the tag you
-provide as an input.
 * You have created an [OAuth client](https://checkmarx.com/resource/documents/en/34965-68612-creating-oauth-clients.html) in Checkmarx One.
-* You define the secret `CXONE_TENANT` that contains the name of your Checkmarx One tenant.
-* You define the secret `CXONE_CLIENT_ID` that contains the client ID of the created OAuth client.
-* You define the secret `CXONE_CLIENT_SECRET` that contains the client secret of the created OAuth client.
+* You have defined secrets that are referenced in the workflow.  For example:
+  * `${{ secrets.CXONE_TENANT }}` could be set to the name of your Checkmarx One tenant.
+  * `${{ secrets.CXONE_CLIENT_ID }}` could be set to the client ID of the created OAuth client.
+  * `${{ secrets.CXONE_CLIENT_SECRET }}` could be set to the client secret of the created OAuth client.
+* If using a self-hosted runner and a container as the build environment, `docker`
+must be installed on the self-hosted runner.
 
 ## Example Workflow
 
-If your tenant is in the US1 environment, the following example workflow will perform a scan on pull requests or pushes targeting the `master` branch:
-
+If your tenant is in the Checkmarx One US environment, the following example workflow will perform a scan on pull requests or pushes targeting the `main` branch:
 
 ```yaml
 name: Checkmarx Scan
@@ -31,42 +38,54 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - master
+      - main
   pull_request:
     types:
       - opened
       - reopened
       - synchronize
     branches:
-      - master
+      - main
 jobs:
-  checkmarx-scan:
-    runs-on: ubuntu-latest
+  execute-checkmarx-scan:
+    permissions:
+      security-events: write
+      contents: read
+      pull-requests: write
+      statuses: write
+    runs-on: self-hosted
 
     steps:
     - name: Code Checkout
       uses: actions/checkout@v4
        
-    - name: CxOne Scan
+    - name: Scan with CxOne++ Action
       id: cxscan
-      uses: checkmarx-ts/cxone-plusplus-github-action@v1
+      uses: checkmarx-ts/cxone-plusplus-github-action@v2
       with:
-        container-image: <<your image tag goes here>>
         cx-tenant: ${{ secrets.CXONE_TENANT }}
         cx-client-id: ${{ secrets.CXONE_CLIENT_ID }}
         cx-client-secret: ${{ secrets.CXONE_CLIENT_SECRET }}
 
-    - name: Show outputs
+    - name: Show Outputs
       shell: bash
       run: |
-        echo ScanID: ${{ steps.cxscan.outputs.scan-id}}
-        echo ProjectID: ${{ steps.cxscan.outputs.project-id}}
+          echo "Scan ID: ${{ steps.cxscan.outputs.scan-id }}"
+          echo "Project ID: ${{ steps.cxscan.outputs.project-id }}"
+          echo "Scan Link: ${{ steps.cxscan.outputs.project-deeplink }}"
 ```
 
-If you are not in the US1 environment, you must provide inputs
-`base-uri` and `base-auth-uri` to
-define the API and authentication endpoints properly.
+The example has the following properties:
 
+* The tenant is located in the Checkmarx One US multi-tenant environment.
+* The scan executes on a self-hosted runner.
+* On push to `main` the Sarif results are uploaded to CodeQL security.
+* Pull-requests that target the `main` branch will run the action and: 
+  * block the PR merge while the scan is executing
+  * write a PR comment listing issues discovered during the scan
+
+The additional configuration options can be used to tune the workflow execution.
+The `Show Outputs` step in the example is completely optional.
 
 # Additional Configuration Options
 
@@ -92,13 +111,13 @@ into the execution of the CxOne CLI and SCA Resolver.
 
  The base URI for the region endpoint where your [tenant is located]( https://checkmarx.com/resource/documents/en/34965-68630-configure.html#UUID-494287f8-3019-2542-c111-cb147c286bac_id_ASTCLIConfigurationEnvironmentVariables-CLIConfigurationParameters).
 
-Default: URI for US1 environment
+Default: URI for US multi-tenant environment
 
 ###  `base-auth-uri`
 
  The base authentication URI for the region endpoint where your [tenant is located]( https://checkmarx.com/resource/documents/en/34965-68630-configure.html#UUID-494287f8-3019-2542-c111-cb147c286bac_id_ASTCLIConfigurationEnvironmentVariables-CLIConfigurationParameters).
 
-Default: URI for US1 environment
+Default: URI for US multi-tenant environment
 
 
 ### `cx-tenant` (required)
@@ -117,10 +136,6 @@ The OAuth Client ID for API access.
 
 The OAuth client secret key for API access.
 
-### `container-image` (required)
-The container tag that was made with the cx-supply-chain-toolkit.
-
-
 ### `project-name`
 
 The name of the project where the scan will be executed.
@@ -130,6 +145,8 @@ Default: The name of the repository.
 ### `additional-scan-params`
 
 Additional parameters passed to the CxOne CLI after `scan create`. 
+
+Default: None
 
 ### `cx-cli-debug`
 If true, turn on debugging for the CxOne CLI and the composite action.
@@ -145,6 +162,12 @@ Default: `cxonepp-gh-action`
 
 Additional parameters to pass to the CxOne CLI (proxy settings, etc) for all CxOne CLI invocations.
 
+Default: None
+
+### `build-container-tag`
+
+The container tag for the build environment where the scan will execute. If not provided, the scan executes in the runner.
+
 
 
 ### `docker-login-registry`
@@ -156,19 +179,21 @@ Default: `docker.io`
 **It is advised to store this as a secret value.**
 
 The username for the container registry login.
-  
-  
-  
+
+Default: None
+    
 ### `docker-login-password`
 **It is advised to store this as a secret value.**
 
 The password for the container registry login.
 
+Default: None
+
 ### `upload-sarif-file`
-If true, uploads the Sarif file to create entries on the GitHub security tab during push events. 
+If true, uploads the Sarif file to create entries on the GitHub security tab
+in response to push events handled on the specified branch.
 
 Default: true
-
 
 ### `attach-sarif-file`
 If true, attaches the Sarif file to the workflow as an artifact for push or pull request events.
@@ -199,17 +224,6 @@ Default: `CycloneDxJson`
 If true, emits the versions of the CxOne CLI and SCA Resolver in the action log.
 
 Default: true
-
-### `container-run-command`
-The command used to execute the container.
-
-Default: 'docker run'
-
-### `container-run-command-params`
-The parameters used when executing the container.
-
-Default: `"-t --rm -v ${GITHUB_WORKSPACE}:/sandbox/input:ro -v $(realpath ${GITHUB_WORKSPACE}/../output):/sandbox/output"`
-
 
 ## Outputs
 

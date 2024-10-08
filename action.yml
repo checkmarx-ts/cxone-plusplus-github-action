@@ -1,6 +1,6 @@
 name: 'Checkmarx One++ GitHub Action'
-description: 'Orchestrates vulnerability scanning and issue tracker item lifecycle.'
-author: 'Nathan Leach, Principal Solutions Architect, Checkmarx'
+description: 'Orchestrates vulnerability scanning with Checkmarx One'
+author: 'Nathan Leach, OSCP, CSSLP, Principal Solutions Architect, Checkmarx'
 
 inputs:
   base-uri:
@@ -40,9 +40,9 @@ inputs:
     default: ''
     description: Additional parameters to pass to the CxOne CLI (proxy settings, etc) for all CxOne CLI invocations.
 
-  container-image:
-    required: true
-    description: The container tag that was made with the cx-supply-chain-toolkit.
+  build-container-tag:
+    required: false
+    description: The container tag for the build environment where the scan will execute. If not provided, the scan executes in the runner.
 
   docker-login-registry:
     default: docker.io
@@ -64,7 +64,6 @@ inputs:
   additional-report-params:
     default: ''
     description: Additional parameters used when compiling reports. Do not add the --filter option; use the "report-filters" input parameter to set filter options.
-
   report-filters:
     default: --filter "state=TO_VERIFY;PROPOSED_NOT_EXPLOITABLE;CONFIRMED;URGENT"
     description: The criteria that selects what to include in any report results.
@@ -79,13 +78,6 @@ inputs:
   show-versions:
     default: true
     description: If true, emits the versions of the CxOne CLI and SCA Resolver in the action log.
-
-  container-run-command:
-    default: 'docker run'
-    description: The command used to execute the container.
-  container-run-command-params:
-    default: "-t --rm -v ${GITHUB_WORKSPACE}:/sandbox/input:ro -v $(realpath ${GITHUB_WORKSPACE}/../output):/sandbox/output"
-    description: The command used to execute the container.
 
 outputs:
   scan-id:
@@ -104,128 +96,200 @@ runs:
   using: 'composite'
   steps:
 
-    - name: Container Registry Login
-      uses: docker/login-action@v2
-      if: inputs.docker-login-username != '' && inputs.docker-login-password != ''
-      with:
-        registry: ${{ inputs.docker-login-registry }}
-        username: ${{ inputs.docker-login-username }}
-        password: ${{ inputs.docker-login-password }}
-
-    - name: Setup working environment
-      shell: bash
+    - shell: bash
       run: |
-        [ "${{ inputs.cx-cli-debug }}" == "true" ] && CXONECLI_DEBUG_FLAG='--debug' || :
-        echo "DOCKER_RUN=${{ inputs.container-run-command }} ${{ inputs.container-run-command-params }}" >> "$GITHUB_ENV"
-        echo "CXONE_CLI_GLOBAL_PARAMS=$CXONECLI_DEBUG_FLAG ${{ inputs.cx-cli-additional-params }} --agent \"${{ inputs.cx-cli-agent }}\" --client-id \"${{ inputs.cx-client-id }}\" --client-secret \"${{ inputs.cx-client-secret }}\" --tenant \"${{ inputs.cx-tenant }}\" --base-uri ${{ inputs.base-uri }} --base-auth-uri ${{ inputs.base-auth-uri }}" >> "$GITHUB_ENV"
-        echo "CXONE_CLI_SCAN_PARAMS=${{ inputs.additional-scan-params }} --project-name \"${{ inputs.project-name }}\" --branch \"${{ github.ref_name }}\" --sca-resolver /sandbox/resolver/ScaResolver --output-path /sandbox/output -s /sandbox/input_sandbox --report-format summaryJSON" >> "$GITHUB_ENV"
-        echo "CXONE_OUTPATH=$(realpath ${GITHUB_WORKSPACE}/../output)" >> "$GITHUB_ENV"
-        echo "CXONE_CLI_REPORT_PARAMS=${{ inputs.additional-report-params }} --output-path /sandbox/output" >> "$GITHUB_ENV"
-        mkdir $(realpath ${GITHUB_WORKSPACE}/../output)
-        chmod g+w $(realpath ${GITHUB_WORKSPACE}/../output)
+        : Set Temp Paths
+
+        RESOLVER=$(mktemp -d -p "$GITHUB_ACTION_PATH")
+        echo "RESOLVER_PATH=$RESOLVER" >> "$GITHUB_ENV"
+
+        CLI=$(mktemp -d -p "$GITHUB_ACTION_PATH")
+        echo "CLI_PATH=$CLI" >> "$GITHUB_ENV"
+
+        OUT_PATH=$(mktemp -d -p "$GITHUB_ACTION_PATH")
+        echo "OUTPUT_PATH=$OUT_PATH" >> "$GITHUB_ENV"
+
+        TOOLKIT=$(mktemp -d -p "$GITHUB_ACTION_PATH")
+        echo "TOOLKIT_PATH=$TOOLKIT" >> "$GITHUB_ENV"
+
+        PSCICDTOOLS=$(mktemp -d -p "$GITHUB_ACTION_PATH")
+        echo "PSCICDTOOLS_PATH=$PSCICDTOOLS" >> "$GITHUB_ENV"
+
 
     - name: Container Registry Login
       uses: docker/login-action@v2
-      if: inputs.docker-login-username != '' && inputs.docker-login-password != ''
+      if: inputs.build-container-tag != '' && inputs.docker-login-username != '' && inputs.docker-login-password != ''
       with:
         registry: ${{ inputs.docker-login-registry }}
         username: ${{ inputs.docker-login-username }}
         password: ${{ inputs.docker-login-password }}
 
-    - name: Pull Container
-      shell: bash
-      run: docker pull ${{ inputs.container-image}} > /dev/null
+    - uses: actions/setup-java@99b8673ff64fbf99d8d325f52d9a5bdedb8483e9
+      with:
+        distribution: 'corretto'
+        java-version: '17'
 
-    - name: Show Versions
+    - shell: bash
+      run: |
+        : Download PS CI/CD Tools https://github.com/checkmarx-ts/ps-cicd-tools
+
+        wget -q -O ${{ env.PSCICDTOOLS_PATH }}/archive-downloader.jar https://github.com/checkmarx-ts/ps-cicd-tools/releases/latest/download/archive-downloader.jar
+        wget -q -O ${{ env.PSCICDTOOLS_PATH }}/jsonpath-query.jar https://github.com/checkmarx-ts/ps-cicd-tools/releases/latest/download/jsonpath-query.jar
+
+
+    - shell: bash
+      if: inputs.build-container-tag != '' 
+      run: |
+        : Download Supply Chain Toolkit https://github.com/checkmarx-ts/cx-supply-chain-toolkit
+
+        java -jar ${{ env.PSCICDTOOLS_PATH }}/archive-downloader.jar \
+          --url https://github.com/checkmarx-ts/cx-supply-chain-toolkit/releases/latest/download/build-environment.zip \
+          --outdir "${{ env.TOOLKIT_PATH }}" --unzip
+
+
+    - shell: bash
+      if: inputs.build-container-tag != '' 
+      run: |
+        : Build Extended Image
+        echo "EXT_IMAGE=$(${{ env.TOOLKIT_PATH }}/autobuild.sh -t '${{ inputs.build-container-tag }}' -d '${{ env.TOOLKIT_PATH }}' -u -g)" >> "$GITHUB_ENV"
+
+
+    - shell: bash
+      if: inputs.build-container-tag != ''
+      run: |
+        : Setup CLI Execution via Container
+
+        echo "CLI_RESOLVER_PATH=/sandbox/resolver/ScaResolver" >> "$GITHUB_ENV"
+        echo "CLI_OUTPUT_PATH=/sandbox/output" >> "$GITHUB_ENV"
+        echo "CLI_INPUT_PATH=/sandbox/input_sandbox" >> "$GITHUB_ENV"
+        echo "RESOLVER_EXEC_CMD=docker run -t --rm -v ${GITHUB_WORKSPACE}:/sandbox/input:ro -v ${{ env.OUTPUT_PATH }}:/sandbox/output ${{ env.EXT_IMAGE }}" >> "$GITHUB_ENV"
+        echo "CLI_EXEC_CMD=docker run -t --rm -v ${GITHUB_WORKSPACE}:/sandbox/input:ro -v ${{ env.OUTPUT_PATH }}:/sandbox/output ${{ env.EXT_IMAGE }} cxone" >> "$GITHUB_ENV"
+
+    - shell: bash
+      if: inputs.build-container-tag == ''
+      run: |
+        : Setup Local CLI Execution
+
+        java -jar ${{ env.PSCICDTOOLS_PATH }}/archive-downloader.jar --cxonecli -o ${{ env.CLI_PATH }}
+        java -jar ${{ env.PSCICDTOOLS_PATH }}/archive-downloader.jar --resolver -o ${{ env.RESOLVER_PATH }}
+
+        echo "CLI_RESOLVER_PATH=${{ env.RESOLVER_PATH }}/ScaResolver" >> "$GITHUB_ENV"
+        echo "CLI_OUTPUT_PATH=${{ env.OUTPUT_PATH }}" >> "$GITHUB_ENV"
+        echo "CLI_INPUT_PATH=$(pwd)" >> "$GITHUB_ENV"
+        echo "CLI_EXEC_CMD=${{ env.CLI_PATH }}/cx" >> "$GITHUB_ENV"
+        echo "RESOLVER_EXEC_CMD=${{ env.RESOLVER_PATH }}/ScaResolver" >> "$GITHUB_ENV"
+    
+    - shell: bash
+      run: |
+        : Resolve Branch Name
+        [ "${{ github.event_name }}" == 'push' ] && echo "SCAN_BRANCH=${{ github.ref_name }}" >> "$GITHUB_ENV" \
+          || echo "SCAN_BRANCH=${{ github.head_ref }}" >> "$GITHUB_ENV"
+
+
+    - shell: bash
+      run: |
+        : Set execution parameters
+
+        [ "${{ inputs.cx-cli-debug }}" == "true" ] && CXONECLI_DEBUG_FLAG='--debug' || :
+
+        echo "CXONE_CLI_GLOBAL_PARAMS=$CXONECLI_DEBUG_FLAG ${{ inputs.cx-cli-additional-params }} --agent \"${{ inputs.cx-cli-agent }}\" --client-id \"${{ inputs.cx-client-id }}\" --client-secret \"${{ inputs.cx-client-secret }}\" --tenant \"${{ inputs.cx-tenant }}\" --base-uri ${{ inputs.base-uri }} --base-auth-uri ${{ inputs.base-auth-uri }}" >> "$GITHUB_ENV"
+        echo "CXONE_CLI_SCAN_PARAMS=${{ inputs.additional-scan-params }} --project-name \"${{ inputs.project-name }}\" --branch \"${{ env.SCAN_BRANCH }}\" --sca-resolver ${{ env.CLI_RESOLVER_PATH }} --output-path ${{ env.CLI_OUTPUT_PATH }} -s ${{ env.CLI_INPUT_PATH }} --report-format summaryJSON" >> "$GITHUB_ENV"
+        echo "CXONE_CLI_REPORT_PARAMS=${{ inputs.additional-report-params }} --output-path ${{ env.CLI_OUTPUT_PATH }}" >> "$GITHUB_ENV"
+
+    - name: 
       if: ${{ inputs.show-versions == 'true' }}
       shell: bash
       run: |
-        ${{ env.DOCKER_RUN }} ${{ inputs.container-image}} --version | cat -v | sed -E 's/.*(CxSCA Resolver.[0-9.]+)\^M$/\1/g'
-        echo CxOne CLI $(${{ env.DOCKER_RUN }} ${{ inputs.container-image}} cxone version)
+          : Show Versions
+          # Make it create the directory on first run
+          ${{ env.CLI_EXEC_CMD }} version > /dev/null 2>&1
+          echo CxOne CLI Version: $(${{ env.CLI_EXEC_CMD }} version)
 
-    - name: Container Debug Validation
-      if: ${{ inputs.cx-cli-debug == 'true' }}
-      shell: bash
+          # Resolver validates irrelevant parameters.
+          echo SCA Resolver $(${{ env.RESOLVER_EXEC_CMD }} | grep ^Version && : || :)
+
+
+    - shell: bash
       run: |
-        echo IF GITHUB UID/GID DO NOT MATCH CONTAINER UID/GID, WRITING TO VOLUME MAPS MAY FAIL
+        : Execute Scan
+        ${{ env.CLI_EXEC_CMD }} scan create ${{ env.CXONE_CLI_SCAN_PARAMS }} ${{ env.CXONE_CLI_GLOBAL_PARAMS }}
+       
 
-        echo GITHUB USER UID: $(id -u)
-        echo CONTAINER USER UID: $(${{ env.DOCKER_RUN }} --entrypoint /bin/bsh ${{ inputs.container-image}} -c 'id -u')
-
-        echo GITHUB USER EFFECTIVE GROUPS: $(id -G)
-        echo CONTAINER USER EFFECTIVE GROUPS: $(${{ env.DOCKER_RUN }} --entrypoint /bin/bsh ${{ inputs.container-image}} -c 'id -G')
-
-        echo TESTING WRITE CAPABILITY ON OUTPUT
-        ${{ env.DOCKER_RUN }} --entrypoint /bin/bsh ${{ inputs.container-image}} -c 'touch /sandbox/output/write'
-        [ -f "${{ env.CXONE_OUTPATH }}/write" ] && rm "${{ env.CXONE_OUTPATH }}/write" || exit 1
-
-        echo TESTING WRITE DENIED ON INPUT
-        set +e
-        ${{ env.DOCKER_RUN }} --entrypoint /bin/bsh ${{ inputs.container-image}} -c 'touch /sandbox/input/write'
-        RESULT=$?
-        [ $RESULT -eq 0 ] && exit 1 || :
-
-
-    - name: Execute Scan
-      shell: bash
-      run: ${{ env.DOCKER_RUN }} ${{ inputs.container-image}} cxone scan create ${{ env.CXONE_CLI_SCAN_PARAMS }} ${{ env.CXONE_CLI_GLOBAL_PARAMS }}
-
-    - name: Collect Output Identifiers
-      id: get-identifiers
+    - id: get-identifiers
       if: ${{ always() }}
       shell: bash
       run: |
-        if [ -f "${{ env.CXONE_OUTPATH }}/cx_result.json" ]; then
-          SCAN_ID=$(jq -Mr .ScanID ${{ env.CXONE_OUTPATH }}/cx_result.json)
-          PROJECT_ID=$(jq -Mr .ProjectID ${{ env.CXONE_OUTPATH }}/cx_result.json)
+        : Collect Output Identifiers
+        if [ -f "${{ env.OUTPUT_PATH }}/cx_result.json" ]; then
+
+          SCAN_ID=$(java -jar ${{ env.PSCICDTOOLS_PATH }}/jsonpath-query.jar -f ${{ env.OUTPUT_PATH }}/cx_result.json -q '$.ScanID')
+          PROJECT_ID=$(java -jar ${{ env.PSCICDTOOLS_PATH }}/jsonpath-query.jar -f ${{ env.OUTPUT_PATH }}/cx_result.json -q '$.ProjectID')
           echo "SCAN_ID=$SCAN_ID" >> "$GITHUB_ENV"
           echo "PROJECT_ID=$PROJECT_ID" >> "$GITHUB_ENV"
+         
           echo "project-id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
           echo "scan-id=$SCAN_ID" >> "$GITHUB_OUTPUT"
-          echo "project-deeplink=${{ inputs.base-uri }}/projects/$PROJECT_ID/overview?branch=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
-          rm ${{ env.CXONE_OUTPATH }}/cx_result.json
+          echo "project-deeplink=$(java -jar ${{ env.PSCICDTOOLS_PATH }}/jsonpath-query.jar -f ${{ env.OUTPUT_PATH }}/cx_result.json -q '$.BaseURI')" >> "$GITHUB_OUTPUT"
+          
+          rm ${{ env.OUTPUT_PATH }}/cx_result.json
         fi
 
-    - name: PR Decorations
-      if: ${{ always() && github.event_name == 'pull_request' && env.SCAN_ID != '' }}
+    - if: ${{ always() && github.event_name == 'pull_request' && env.SCAN_ID != '' }}
       shell: bash
       run: |
-        ${{ env.DOCKER_RUN }} ${{ inputs.container-image}} cxone utils pr github --scan-id "${{ env.SCAN_ID }}" --namespace "${{ github.repository_owner }}" --repo-name "${{ github.event.repository.name }}" --pr-number "${{ github.event.number }}" --token "${{ github.token }}" ${{ env.CXONE_CLI_GLOBAL_PARAMS }}
+        : PR Decoration
+        [ "${{ inputs.cx-cli-debug }}" == "true" ] && echo "THIS REQUIRES WORKFLOW PERMISSIONS 'pull-requests: write' AND 'statuses: write' " || :
+
+        ${{ env.CLI_EXEC_CMD }} utils pr github --scan-id "${{ env.SCAN_ID }}" --namespace "${{ github.repository_owner }}" --repo-name "${{ github.event.repository.name }}" --pr-number "${{ github.event.number }}" --token "${{ github.token }}" ${{ env.CXONE_CLI_GLOBAL_PARAMS }}
 
     - name: Sarif Report Generation
       if: ${{ env.SCAN_ID != '' && ( (inputs.upload-sarif-file == 'true' && github.event_name == 'push') || inputs.attach-sarif-file == 'true' ) }}
       shell: bash
       run: |
-        ${{ env.DOCKER_RUN }} ${{ inputs.container-image}} cxone results show ${{ env.CXONE_CLI_REPORT_PARAMS }} ${{ inputs.report-filters }} --report-format sarif --scan-id "${{ env.SCAN_ID }}" ${{ env.CXONE_CLI_GLOBAL_PARAMS }}
-        cp ${{ env.CXONE_OUTPATH }}/cx_result.sarif ${GITHUB_WORKSPACE}
+        : Sarif Report Generation
+
+        [ "${{ inputs.cx-cli-debug }}" == "true" ] && echo "UPLOADING SARIF OUTPUT TO CODEQL REQUIRES WORKFLOW PERMISSIONS 'security-events: write'" || :
+
+        ${{ env.CLI_EXEC_CMD }} results show ${{ env.CXONE_CLI_REPORT_PARAMS }} ${{ inputs.report-filters }} --report-format sarif --scan-id "${{ env.SCAN_ID }}" ${{ env.CXONE_CLI_GLOBAL_PARAMS }}
+        cp ${{ env.OUTPUT_PATH }}/cx_result.sarif ${GITHUB_WORKSPACE}
 
     - name: Sarif Report Attach as Artifact
       if: ${{ env.SCAN_ID != '' && inputs.attach-sarif-file == 'true' }}
       uses: actions/upload-artifact@v4
       with:
         name: cx_result.sarif
-        path: ${{ env.CXONE_OUTPATH }}/cx_result.sarif
+        path: ${{ env.OUTPUT_PATH }}/cx_result.sarif
 
     - name: Sarif Report Upload on Push
       if: ${{ env.SCAN_ID != '' && github.event_name == 'push' && inputs.upload-sarif-file == 'true' }}
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       with:
-        sarif_file: cx_result.sarif
+        sarif_file: ${{ env.OUTPUT_PATH }}/cx_result.sarif
         category: Checkmarx
       
-    - name: SBOM Report Generation
-      if: ${{ env.SCAN_ID != '' && inputs.attach-sbom-file == 'true' }}
+    - if: ${{ env.SCAN_ID != '' && inputs.attach-sbom-file == 'true' }}
       shell: bash
       run: |
-          ${{ env.DOCKER_RUN }} ${{ inputs.container-image}} cxone results show ${{ env.CXONE_CLI_REPORT_PARAMS }} ${{ inputs.report-filters }} --report-format SBOM --report-sbom-format ${{ inputs.sbom-standard }} --scan-id "${{ env.SCAN_ID }}" ${{ env.CXONE_CLI_GLOBAL_PARAMS }}
+          : SBOM Report Generation
+          ${{ env.CLI_EXEC_CMD }} results show ${{ env.CXONE_CLI_REPORT_PARAMS }} ${{ inputs.report-filters }} --report-format SBOM --report-sbom-format ${{ inputs.sbom-standard }} --scan-id "${{ env.SCAN_ID }}" ${{ env.CXONE_CLI_GLOBAL_PARAMS }}
 
     - name: SBOM Report Attach as Artifact
       if: ${{ env.SCAN_ID != '' && inputs.attach-sbom-file == 'true' }}
       uses: actions/upload-artifact@v4
       with:
         name: cx_result_sbom.json
-        path: ${{ env.CXONE_OUTPATH }}/cx_result_sbom.json
+        path: ${{ env.OUTPUT_PATH }}/cx_result_sbom.json
 
+    - if: always()
+      shell: bash
+      run: |
+        : Cleanup temp directories
+
+        [ -d ${{ env.RESOLVER_PATH }} ] && rm -rf ${{ env.RESOLVER_PATH }} || :
+        [ -d ${{ env.CLI_PATH }} ] && rm -rf ${{ env.CLI_PATH }} || :
+        [ -d ${{ env.OUTPUT_PATH }} ] && rm -rf ${{ env.OUTPUT_PATH }} || :
+        [ -d ${{ env.TOOLKIT_PATH }} ] && rm -rf ${{ env.TOOLKIT_PATH }} || :
+        [ -d ${{ env.PSCICDTOOLS_PATH }} ] && rm -rf ${{ env.PSCICDTOOLS_PATH }} || :
 
 branding:
   color: 'green'
