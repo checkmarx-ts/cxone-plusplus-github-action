@@ -117,14 +117,14 @@ runs:
 
 
     - name: Container Registry Login
-      uses: docker/login-action@v2
+      uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
       if: inputs.build-container-tag != '' && inputs.docker-login-username != '' && inputs.docker-login-password != ''
       with:
         registry: ${{ inputs.docker-login-registry }}
         username: ${{ inputs.docker-login-username }}
         password: ${{ inputs.docker-login-password }}
 
-    - uses: actions/setup-java@99b8673ff64fbf99d8d325f52d9a5bdedb8483e9
+    - uses: actions/setup-java@b36c23c0d998641eff861008f374ee103c25ac73
       with:
         distribution: 'corretto'
         java-version: '17'
@@ -255,14 +255,14 @@ runs:
 
     - name: Sarif Report Attach as Artifact
       if: ${{ env.SCAN_ID != '' && inputs.attach-sarif-file == 'true' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9
       with:
         name: cx_result.sarif
         path: ${{ env.OUTPUT_PATH }}/cx_result.sarif
 
     - name: Sarif Report Upload on Push
       if: ${{ env.SCAN_ID != '' && github.event_name == 'push' && inputs.upload-sarif-file == 'true' }}
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@c36620d31ac7c881962c3d9dd939c40ec9434f2b
       with:
         sarif_file: ${{ env.OUTPUT_PATH }}/cx_result.sarif
         category: Checkmarx
@@ -275,7 +275,7 @@ runs:
 
     - name: SBOM Report Attach as Artifact
       if: ${{ env.SCAN_ID != '' && inputs.attach-sbom-file == 'true' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9
       with:
         name: cx_result_sbom.json
         path: ${{ env.OUTPUT_PATH }}/cx_result_sbom.json
