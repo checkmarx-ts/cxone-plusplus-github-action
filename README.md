@@ -61,7 +61,7 @@ jobs:
        
     - name: Scan with CxOne++ Action
       id: cxscan
-      uses: checkmarx-ts/cxone-plusplus-github-action@v2
+      uses: checkmarx-ts/cxone-plusplus-github-action@v3
       with:
         cx-tenant: ${{ secrets.CXONE_TENANT }}
         cx-client-id: ${{ secrets.CXONE_CLIENT_ID }}
@@ -161,6 +161,12 @@ Default: `cxonepp-gh-action`
 ### `cx-cli-additional-params`
 
 Additional parameters to pass to the CxOne CLI (proxy settings, etc) for all CxOne CLI invocations.
+
+Default: None
+
+### `resolver-additional-params`
+
+Additional parameters to pass to the SCA Resolver for all Resolver invocations.
 
 Default: None
 
