@@ -182,8 +182,12 @@ runs:
     - shell: bash
       run: |
         : Resolve Branch Name
-        [ "${{ github.event_name }}" == 'push' ] && echo "SCAN_BRANCH=${{ github.ref_name }}" >> "$GITHUB_ENV" \
-          || echo "SCAN_BRANCH=${{ github.head_ref }}" >> "$GITHUB_ENV"
+        
+        echo event_name = ${{ github.event_name }}
+        echo ref_name = ${{ github.ref_name }}
+
+        [ "${{ github.event_name }}" == 'push' || "${{ github.event_name }}" == 'workflow_dispatch' ] && echo "SCAN_BRANCH=${{ github.ref_name }}" >> "$GITHUB_ENV" || :
+        [ "${{ github.event_name }}" == 'pull_request' ] && echo "SCAN_BRANCH=${{ github.head_ref }}" >> "$GITHUB_ENV" || :
 
 
     - shell: bash
