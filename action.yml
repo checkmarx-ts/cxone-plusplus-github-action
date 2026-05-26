@@ -194,6 +194,7 @@ runs:
     - shell: bash
       if: inputs.resolver-additional-params != ''
       run: |
+        : Set Resolver Parameters
         echo "RESOLVER_PARAMS=--sca-resolver-params \"${{ inputs.resolver-additional-params }}\"" >> "$GITHUB_ENV"
 
 
