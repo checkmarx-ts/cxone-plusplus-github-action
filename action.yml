@@ -204,7 +204,7 @@ runs:
         [ "${{ inputs.cx-cli-debug }}" == "true" ] && CXONECLI_DEBUG_FLAG='--debug' || :
 
         echo "CXONE_CLI_GLOBAL_PARAMS=$CXONECLI_DEBUG_FLAG ${{ inputs.cx-cli-additional-params }} --agent \"${{ inputs.cx-cli-agent }}\" --client-id \"${{ inputs.cx-client-id }}\" --client-secret \"${{ inputs.cx-client-secret }}\" --tenant \"${{ inputs.cx-tenant }}\" --base-uri ${{ inputs.base-uri }} --base-auth-uri ${{ inputs.base-auth-uri }}" >> "$GITHUB_ENV"
-        echo "CXONE_CLI_SCAN_PARAMS=${{ inputs.additional-scan-params }} --project-name \"${{ inputs.project-name }}\" --branch \"${{ env.SCAN_BRANCH }}\" -s ${{ env.CLI_INPUT_PATH }} --sca-resolver ${{ env.CLI_RESOLVER_PATH }} ${{ env.RESOLVER_PARAMS }} --output-path ${{ env.CLI_OUTPUT_PATH }} --report-format summaryJSON" >> "$GITHUB_ENV"
+        echo "CXONE_CLI_SCAN_PARAMS=${{ inputs.additional-scan-params }} --project-name \"${{ inputs.project-name }}\" --branch \"${{ env.SCAN_BRANCH }}\" -s ${{ env.CLI_INPUT_PATH }} --output-path ${{ env.CLI_OUTPUT_PATH }} --report-format summaryJSON --sca-resolver ${{ env.CLI_RESOLVER_PATH }} ${{ env.RESOLVER_PARAMS }}" >> "$GITHUB_ENV"
         echo "CXONE_CLI_REPORT_PARAMS=${{ inputs.additional-report-params }} --output-path ${{ env.CLI_OUTPUT_PATH }}" >> "$GITHUB_ENV"
 
     - name: 
