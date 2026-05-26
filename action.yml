@@ -207,7 +207,7 @@ runs:
           echo CxOne CLI Version: $(${{ env.CLI_EXEC_CMD }} version)
 
           # Resolver validates irrelevant parameters.
-          echo SCA Resolver $(${{ env.RESOLVER_EXEC_CMD }} | grep '^Version' || { $(${{ env.RESOLVER_EXEC_CMD }}) ; exit 1; } )
+          echo SCA Resolver $(${{ env.RESOLVER_EXEC_CMD }} | grep '^Version' || { ${{ env.RESOLVER_EXEC_CMD }} ; exit 1; } )
 
 
     - shell: bash
